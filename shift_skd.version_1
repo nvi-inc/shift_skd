@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+import re
+import sys
+
+from datetime import datetime, timedelta
+
+fmts = ["%y%j%H%M%S", "%Y%j%H%M%S"]
+
+start = datetime.now()
+end = datetime.now()
+
+exper = "UNKNOWN"
+skd_shift = 0
+skd_len = 0
+rotate = False
+offset = 0
+
+skd_rec = re.compile(r"(?P<before>.*)(?P<time>\d{11})(?P<after>.*)").match
+
+def sk2time(text):
+    for fmt in fmts:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            pass
+    raise Exception(f'Invalid time format {text}')
+
+
+def copy_lines(f_in, f_out, record):
+    f_out.write(record)
+    for record in f_in:
+        if record.startswith('$'):
+            return record
+        else:
+            f_out.write(record)
+    return ''
+
+
+def param_block(f_in, f_out, record):
+    global start, end
+
+    f_out.write(record)
+    for record in f_in:
+        if record.startswith('$'):
+            return record
+        if record.startswith('SCHEDULE_CREATE_DATE'):
+            f_out.write(f"SCHEDULE_CREATE_DATE {datetime.now().strftime(fmts[0])}\n")
+        elif record.startswith('SCHEDULER'):
+            words = record.split()
+            old, end = sk2time(old_start := words[-3]), sk2time(words[-1])
+            if rotate:
+                start = old + offset
+                end = start + timedelta(hours=skd_len) + offset if skd_len > 0 else end + offset
+                words[-3], words[-1] = start.strftime(fmts[0]), end.strftime(fmts[0])
+                dur = int((end - start).total_seconds() / 3600 + 0.2)
+                print(f"Rotating schedule from {old_start} to {words[-3]}. Length {dur} hour{'s' if dur > 1 else ''}")
+                f_out.write(f"{' '.join(words)}\n")
+            else:
+                start = old + timedelta(days=skd_shift)
+                end = start + timedelta(hours=skd_len) if skd_len > 0 else end + (start - old)
+                words[-3], words[-1] = start.strftime(fmts[0]), end.strftime(fmts[0])
+                dur = int((end - start).total_seconds() / 3600 + 0.2)
+                print(f"Shifting schedule from {old_start} to {words[-3]}. Length {dur} hour{'s' if dur > 1 else ''}")
+                f_out.write(f"{' '.join(words)}\n")
+        else:
+            f_out.write(record)
+    return ''
+
+
+def sked_block(f_in, f_out, record):
+
+    f_out.write(record)
+    for record in f_in:
+        if record.startswith('$'):
+            return record
+        if match := skd_rec(record):
+            t = sk2time(match['time']) + offset
+            if start <= t <= end:
+                f_out.write(f"{match['before']}{t.strftime(fmts[0])}{match['after']}\n")
+        else:
+            f_out.write(record)
+    return ''
+
+
+def exper_block(f_in, f_out, record):
+    f_out.write(f"$EXPER {exper.lower()}\n")
+    for record in f_in:
+        if record.startswith('$'):
+            return record
+        else:
+            f_out.write(record)
+    return ''
+
+
+if __name__ == '__main__':
+    import argparse
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-r', '--rotate', help='rotate', action='store_true')
+    parser.add_argument('in_path', help='input schedule')
+    parser.add_argument('out_path', help='input schedule')
+    parser.add_argument('days', help='Number of days to shift', type=int)
+    parser.add_argument('length', help='Length in hours', type=int, nargs='?', default=0)
+
+    args = parser.parse_args()
+
+    skd_shift, skd_len, rotate = args.days, args.length, args.rotate
+    offset = timedelta(days=(365.2422 / 366.2422 * skd_shift))
+
+    if not (p_in := Path(args.in_path)).exists():
+        print(f"{args.in_path} does not exist")
+        sys.exit(1)
+    if (p_out := Path(args.out_path)).exists():
+        while True:
+            rsp = input(f"{p_out} already exist! Overwrite it? (Y/n) ")
+            if rsp.startswith(('n', 'N')):
+                sys.exit(0)
+            if not rsp or rsp.startswith(('y', 'Y')):
+                break
+    exper = p_out.stem
+    fnc = {'$PARAM': param_block, '$SKED': sked_block, '$EXPER': exper_block}
+    with open(args.in_path, 'r', errors='ignore') as f_in, open(args.out_path, 'w') as f_out:
+        line = f_in.readline()
+        while True:
+            if not (line := fnc.get(line.split()[0], copy_lines)(f_in, f_out, line)):
+                break
+
+
+
+
+
