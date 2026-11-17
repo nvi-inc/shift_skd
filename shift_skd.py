@@ -190,7 +190,7 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--rotate', help='rotate', action='store_true')
     parser.add_argument('--reverse', help='reverse', action='store_true')
     parser.add_argument('in_path', help='input schedule')
-    parser.add_argument('out_path', help='input schedule')
+    parser.add_argument('out_path', help='output schedule')
     parser.add_argument('shift', help='Number of days to shift or start date', type=validate_shift)
     parser.add_argument('length', help='Length in hours', type=int, nargs='?', default=0)
 
